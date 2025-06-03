@@ -4,8 +4,11 @@ import torch
 import torch.nn as nn
 import torchtune
 from huggingface_hub import PyTorchModelHubMixin
-from torchtune.models import llama3_2
+from torchtune.models import llama2, llama3_2
 
+######################################################
+#llama3_2 Base Models
+######################################################
 
 def llama3_2_1B() -> torchtune.modules.transformer.TransformerDecoder:
     return llama3_2.llama3_2(
@@ -22,7 +25,6 @@ def llama3_2_1B() -> torchtune.modules.transformer.TransformerDecoder:
         scale_factor=32,
     )
 
-
 def llama3_2_100M() -> torchtune.modules.transformer.TransformerDecoder:
     return llama3_2.llama3_2(
         vocab_size=128_256,
@@ -38,12 +40,48 @@ def llama3_2_100M() -> torchtune.modules.transformer.TransformerDecoder:
         scale_factor=32,
     )
 
+######################################################
+# Llama 2 Base Models
+######################################################
+# def llama2_1B() -> torchtune.modules.transformer.TransformerDecoder:
+#     return llama2.llama2(
+#         vocab_size=128_256,  # Keep same vocab size
+#         num_layers=16,       # Adjust based on Llama2 1B config
+#         num_heads=32,        # Adjust based on Llama2 1B config
+#         num_kv_heads=8,      # Adjust based on Llama2 1B config
+#         embed_dim=2048,      # Adjust based on Llama2 1B config
+#         max_seq_len=2048,    # Keep same sequence length
+#         intermediate_dim=8192, # Adjust based on Llama2 1B config
+#         attn_dropout=0.0,    # Keep same
+#         norm_eps=1e-5,       # Keep same
+#         rope_base=10000,     # Llama2 typically uses 10000 for RoPE base
+#         # scale_factor=32,     # Keep same
+#     )
+
+# def llama2_100M() -> torchtune.modules.transformer.TransformerDecoder:
+#     return llama2.llama2(
+#         vocab_size=128_256,  
+#         num_layers=4,       
+#         num_heads=8,        
+#         num_kv_heads=2,     
+#         embed_dim=1024,     
+#         max_seq_len=2048,    
+#         intermediate_dim=8192, 
+#         attn_dropout=0.0,    
+#         norm_eps=1e-5,      
+#         rope_base=10000,     
+#         # scale_factor=32,     
+#     )
 
 FLAVORS = {
     "llama-1B": llama3_2_1B,
     "llama-100M": llama3_2_100M,
 }
 
+# FLAVORS = {
+#     "llama-1B": llama2_1B,
+#     'llama-100M': llama2_100M
+# }
 
 def _prepare_transformer(model):
     embed_dim = model.tok_embeddings.embedding_dim
@@ -142,11 +180,12 @@ class Model(
             tokens: (batch_size, seq_len, audio_num_codebooks+1)
             tokens_mask: (batch_size, seq_len, audio_num_codebooks+1)
             input_pos: (batch_size, seq_len) positions for each token
-            mask: (batch_size, seq_len, max_seq_len
+            mask: (batch_size, seq_len, max_seq_len)
 
         Returns:
             (batch_size, audio_num_codebooks) sampled tokens
         """
+        print("\nStarting audio generation...")
         dtype = next(self.parameters()).dtype
         b, s, _ = tokens.size()
 
@@ -168,7 +207,14 @@ class Model(
 
         # Decoder caches must be reset every frame.
         self.decoder.reset_caches()
-        for i in range(1, self.config.audio_num_codebooks):
+        total_codebooks = self.config.audio_num_codebooks
+        print(f"Generating {total_codebooks} audio codebooks...")
+        
+        for i in range(1, total_codebooks):
+            # Show progress
+            progress = (i / (total_codebooks - 1)) * 100
+            print(f"\rProgress: [{i}/{total_codebooks - 1}] {progress:.1f}%", end="", flush=True)
+            
             curr_decoder_mask = _index_causal_mask(self.decoder_causal_mask, curr_pos)
             decoder_h = self.decoder(self.projection(curr_h), input_pos=curr_pos, mask=curr_decoder_mask).to(
                 dtype=dtype
@@ -181,6 +227,7 @@ class Model(
             curr_sample = torch.cat([curr_sample, ci_sample], dim=1)
             curr_pos = curr_pos[:, -1:] + 1
 
+        print("\nAudio generation complete!")
         return curr_sample
 
     def reset_caches(self):

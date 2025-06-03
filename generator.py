@@ -1,13 +1,16 @@
 from dataclasses import dataclass
 from typing import List, Tuple
+import time
 
 import torch
+torch.set_num_threads(torch.get_num_threads())  # Use all CPU cores
+
 import torchaudio
 from huggingface_hub import hf_hub_download
 from models import Model
 from moshi.models import loaders
 from tokenizers.processors import TemplateProcessing
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from watermarking import CSM_1B_GH_WATERMARK, load_watermarker, watermark
 
 
@@ -18,13 +21,14 @@ class Segment:
     # (num_samples,), sample_rate = 24_000
     audio: torch.Tensor
 
-
+#Llama3 tokenizer
 def load_llama3_tokenizer():
     """
-    https://github.com/huggingface/transformers/issues/22794#issuecomment-2092623992
+    Load and configure the Llama3 tokenizer from local files
     """
+    local_model_path = "/home/mercyolu/.llama/checkpoints/Llama3.2-1B"
     tokenizer_name = "meta-llama/Llama-3.2-1B"
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    tokenizer = AutoTokenizer.from_pretrained(local_model_path)
     bos = tokenizer.bos_token
     eos = tokenizer.eos_token
     tokenizer._tokenizer.post_processor = TemplateProcessing(
@@ -35,6 +39,33 @@ def load_llama3_tokenizer():
 
     return tokenizer
 
+# def load_llama2_tokenizer():
+#     """
+#     Load and configure the Llama2 tokenizer from local files
+#     """
+#     # Path to your downloaded Llama2 model
+#     local_model_path = "/home/mercyolu/.llama/checkpoints/Llama-2-7b"
+    
+#     try:
+#         # Load tokenizer from local directory
+#         tokenizer = AutoTokenizer.from_pretrained(local_model_path)
+        
+#         # Ensure we have the necessary special tokens
+#         if tokenizer.pad_token is None:
+#             tokenizer.pad_token = tokenizer.eos_token
+        
+#         # Configure the tokenizer with appropriate templates
+#         bos = tokenizer.bos_token or "<s>"
+#         eos = tokenizer.eos_token or "</s>"
+        
+#         tokenizer._tokenizer.post_processor = TemplateProcessing(
+#             single=f"{bos}:0 $A:0 {eos}:0",
+#             pair=f"{bos}:0 $A:0 {eos}:0 {bos}:1 $B:1 {eos}:1",
+#             special_tokens=[(f"{bos}", tokenizer.bos_token_id), (f"{eos}", tokenizer.eos_token_id)],
+#         )
+#         return tokenizer
+#     except Exception as e:
+#         raise RuntimeError(f"Failed to load Llama2 tokenizer from local path {local_model_path}: {str(e)}")
 
 class Generator:
     def __init__(
@@ -49,7 +80,7 @@ class Generator:
         device = next(model.parameters()).device
         mimi_weight = hf_hub_download(loaders.DEFAULT_REPO, loaders.MIMI_NAME)
         mimi = loaders.get_mimi(mimi_weight, device=device)
-        mimi.set_num_codebooks(32)
+        mimi.set_num_codebooks(32)#edit codebooks to 32
         self._audio_tokenizer = mimi
 
         self._watermarker = load_watermarker(device=device)
